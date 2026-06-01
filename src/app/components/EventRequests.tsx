@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { Check, X, User } from "lucide-react";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
-import { requestApi, eventApi, EventRequest, User as UserType } from "../../utils/localStorageApi";
+import { requestApi, eventApi, EventRequest, User as UserType } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function EventRequests() {
@@ -11,6 +11,7 @@ export default function EventRequests() {
   const [requests, setRequests] = useState<Array<EventRequest & { user: UserType }>>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
+  const [eventTitle, setEventTitle] = useState("");
 
   useEffect(() => {
     loadRequests();
@@ -23,6 +24,7 @@ export default function EventRequests() {
       // Проверяем что пользователь - организатор
       const event = await eventApi.get(id!);
       const currentUserId = getCurrentUserId();
+      setEventTitle(event.title);
 
       if (event.organizerId !== currentUserId) {
         alert("Только организатор может просматривать заявки");
@@ -45,10 +47,7 @@ export default function EventRequests() {
     try {
       setProcessing(requestId);
       await requestApi.approve(requestId, id!);
-
-      // Удаляем из списка
-      setRequests(requests.filter(r => r.id !== requestId));
-
+      await loadRequests();
       alert("Заявка одобрена!");
     } catch (error) {
       console.error("Error approving request:", error);
@@ -62,10 +61,7 @@ export default function EventRequests() {
     try {
       setProcessing(requestId);
       await requestApi.reject(requestId);
-
-      // Удаляем из списка
-      setRequests(requests.filter(r => r.id !== requestId));
-
+      await loadRequests();
       alert("Заявка отклонена");
     } catch (error) {
       console.error("Error rejecting request:", error);
@@ -85,7 +81,7 @@ export default function EventRequests() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f2f2f7] to-white">
-      <NavigationBar title="Заявки на событие" showBack />
+      <NavigationBar title={eventTitle ? `Заявки: ${eventTitle}` : "Заявки на событие"} showBack />
 
       <div className="px-4 py-4">
         {requests.length === 0 ? (

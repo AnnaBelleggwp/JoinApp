@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Calendar, Users, MessageCircle, MapPin, ChevronRight } from "lucide-react";
+import { markOnboardingComplete } from "../../utils/auth";
 
 const onboardingSteps = [
   {
@@ -35,22 +36,34 @@ interface OnboardingProps {
 
 export default function Onboarding({ onComplete }: OnboardingProps) {
   const [currentStep, setCurrentStep] = useState(0);
+  const [completing, setCompleting] = useState(false);
 
   const handleNext = () => {
+    if (completing) return;
+
     if (currentStep < onboardingSteps.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
-      handleComplete();
+      void handleComplete();
     }
   };
 
   const handleSkip = () => {
-    handleComplete();
+    void handleComplete();
   };
 
-  const handleComplete = () => {
-    localStorage.setItem("onboarding_completed", "true");
-    onComplete();
+  const handleComplete = async () => {
+    if (completing) return;
+
+    setCompleting(true);
+    try {
+      await markOnboardingComplete();
+      onComplete();
+    } catch (error) {
+      console.error("Error completing onboarding:", error);
+      alert("Не удалось завершить онбординг. Попробуйте еще раз.");
+      setCompleting(false);
+    }
   };
 
   const step = onboardingSteps[currentStep];
@@ -62,6 +75,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
       <div className="p-4 flex justify-end">
         <button
           onClick={handleSkip}
+          disabled={completing}
           className="text-[17px] font-semibold text-[#3c3c43]/60"
         >
           Пропустить
@@ -121,7 +135,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         <motion.button
           whileTap={{ scale: 0.97 }}
           onClick={handleNext}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#34C759] to-[#30D158] text-white text-[17px] font-bold flex items-center justify-center gap-2 shadow-lg"
+          disabled={completing}
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#34C759] to-[#30D158] text-white text-[17px] font-bold flex items-center justify-center gap-2 shadow-lg disabled:opacity-60"
         >
           {currentStep === onboardingSteps.length - 1 ? "Начать" : "Далее"}
           <ChevronRight className="w-5 h-5" />

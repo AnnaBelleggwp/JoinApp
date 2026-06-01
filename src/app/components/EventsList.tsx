@@ -6,12 +6,13 @@ import NavigationBar from "./NavigationBar";
 import LazyMap from "./LazyMap";
 import FiltersModal from "./FiltersModal";
 import SearchModal from "./SearchModal";
-import { eventApi } from "../../utils/api";
+import { eventApi, type Event } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function EventsList() {
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [joiningEventIds, setJoiningEventIds] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<"list" | "map">("list");
   const [showFilters, setShowFilters] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -28,7 +29,7 @@ export default function EventsList() {
   const loadEvents = async () => {
     try {
       setLoading(true);
-      const data = await eventApi.getAll();
+      const data = await eventApi.discover({ limit: 50 });
       setEvents(data);
     } catch (error) {
       console.error("Error loading events:", error);
@@ -39,28 +40,41 @@ export default function EventsList() {
 
   const handleJoin = async (eventId: string, e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
 
     try {
       const event = events.find(ev => ev.id === eventId);
-      if (!event) return;
+      if (!event || event.participationStatus !== "none" || joiningEventIds.has(eventId)) return;
 
+      setJoiningEventIds((current) => new Set(current).add(eventId));
       const currentUserId = getCurrentUserId();
-      if (event.isJoined) {
-        await eventApi.leave(eventId, currentUserId);
-      } else {
-        await eventApi.join(eventId, currentUserId);
-      }
-
-      // Обновляем локальное состояние
-      setEvents(events.map(ev =>
-        ev.id === eventId
-          ? { ...ev, isJoined: !ev.isJoined, attendees: ev.isJoined ? ev.attendees - 1 : ev.attendees + 1 }
-          : ev
-      ));
+      await eventApi.join(eventId, currentUserId);
+      await loadEvents();
     } catch (error) {
       console.error("Error joining/leaving event:", error);
       alert("Ошибка при обновлении участия");
+    } finally {
+      setJoiningEventIds((current) => {
+        const next = new Set(current);
+        next.delete(eventId);
+        return next;
+      });
     }
+  };
+
+  const eventStatusLabel = (event: Event) => {
+    if (joiningEventIds.has(event.id)) return "...";
+    if (event.participationStatus === "joined") return "Я в теме";
+    if (event.participationStatus === "pending") return "Заявка";
+    if (event.participationStatus === "rejected") return "Отказано";
+    return "Джойн";
+  };
+
+  const eventStatusClassName = (event: Event) => {
+    if (event.participationStatus === "joined") return "bg-white/90 text-[#34C759]";
+    if (event.participationStatus === "pending") return "bg-white/90 text-[#8e8e93]";
+    if (event.participationStatus === "rejected") return "bg-white/90 text-[#ff3b30]";
+    return "bg-[#34C759]/90 text-white";
   };
 
   const filteredEvents = events.filter(event => {
@@ -77,6 +91,12 @@ export default function EventsList() {
     if (attendeesFilter === "15-25") return event.attendees >= 15 && event.attendees <= 25;
     return true;
   });
+
+  const formatDistance = (distanceMeters?: number | null) => {
+    if (distanceMeters == null) return null;
+    if (distanceMeters < 1000) return `${Math.round(distanceMeters)} м`;
+    return `${(distanceMeters / 1000).toFixed(distanceMeters < 10000 ? 1 : 0)} км`;
+  };
 
   const applyFilters = () => {
     setShowFilters(false);
@@ -178,18 +198,19 @@ export default function EventsList() {
 
                       {/* Кнопка статуса */}
                       <div className="absolute top-3 right-3">
-                        {event.isJoined ? (
-                          <div className="px-4 py-1.5 rounded-full text-[15px] font-semibold backdrop-blur-md bg-white/90 text-[#34C759]">
-                            Я в теме
-                          </div>
-                        ) : (
+                        {event.participationStatus === "none" ? (
                           <motion.button
                             whileTap={{ scale: 0.95 }}
                             onClick={(e) => handleJoin(event.id, e)}
-                            className="px-4 py-1.5 rounded-full text-[15px] font-semibold backdrop-blur-md bg-[#34C759]/90 text-white"
+                            disabled={joiningEventIds.has(event.id)}
+                            className={`px-4 py-1.5 rounded-full text-[15px] font-semibold backdrop-blur-md ${eventStatusClassName(event)}`}
                           >
-                            Джойн
+                            {eventStatusLabel(event)}
                           </motion.button>
+                        ) : (
+                          <div className={`px-4 py-1.5 rounded-full text-[15px] font-semibold backdrop-blur-md ${eventStatusClassName(event)}`}>
+                            {eventStatusLabel(event)}
+                          </div>
                         )}
                       </div>
 
@@ -216,6 +237,11 @@ export default function EventsList() {
                           <span className="text-[#3c3c43]/80 line-clamp-1">
                             {event.location}
                           </span>
+                          {formatDistance(event.distanceMeters) && (
+                            <span className="text-[#3c3c43]/50 whitespace-nowrap">
+                              {formatDistance(event.distanceMeters)}
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex items-center justify-between pt-2">
@@ -231,7 +257,7 @@ export default function EventsList() {
                             <div className="h-1.5 bg-[#e5e5ea] rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-gradient-to-r from-[#34C759] to-[#30D158] rounded-full transition-all duration-500"
-                                style={{ width: `${(event.attendees / event.maxAttendees) * 100}%` }}
+                                style={{ width: `${event.maxAttendees ? Math.min((event.attendees / event.maxAttendees) * 100, 100) : 0}%` }}
                               />
                             </div>
                           </div>

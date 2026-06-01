@@ -5,15 +5,16 @@ import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
 import ShareModal from "./ShareModal";
 import ConfirmModal from "./ConfirmModal";
-import { eventApi } from "../../utils/api";
+import { chatApi, eventApi, type Event } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function EventDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [event, setEvent] = useState(null);
+  const [event, setEvent] = useState<Event | null>(null);
   const [isLiked, setIsLiked] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [mutating, setMutating] = useState(false);
   const [eventChatId, setEventChatId] = useState<string | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -31,9 +32,12 @@ export default function EventDetails() {
       const data = await eventApi.get(id!);
       setEvent(data);
 
-      // Получаем ID чата события
-      const chatId = localStorage.getItem(`event:${id}:chatId`);
-      setEventChatId(chatId);
+      if (data.participationStatus === "joined") {
+        const chat = await chatApi.getForEvent(data.id);
+        setEventChatId(chat?.id || null);
+      } else {
+        setEventChatId(null);
+      }
     } catch (error) {
       console.error("Error loading event:", error);
     } finally {
@@ -42,7 +46,7 @@ export default function EventDetails() {
   };
 
   const handleJoinClick = async () => {
-    if (!event) return;
+    if (!event || mutating) return;
 
     // Если заявка - ничего не делаем
     if (event.participationStatus === "pending") {
@@ -63,6 +67,7 @@ export default function EventDetails() {
     } else {
       // Присоединяемся без подтверждения
       try {
+        setMutating(true);
         const currentUserId = getCurrentUserId();
         const result = await eventApi.join(event.id, currentUserId);
         await loadEvent();
@@ -75,14 +80,17 @@ export default function EventDetails() {
       } catch (error) {
         console.error("Error joining event:", error);
         alert(error.message || "Ошибка при обновлении участия");
+      } finally {
+        setMutating(false);
       }
     }
   };
 
   const handleConfirmedAction = async () => {
-    if (!event || !confirmAction) return;
+    if (!event || !confirmAction || mutating) return;
 
     try {
+      setMutating(true);
       const currentUserId = getCurrentUserId();
 
       if (confirmAction === "leave") {
@@ -102,6 +110,10 @@ export default function EventDetails() {
     } catch (error) {
       console.error("Error joining/leaving event:", error);
       alert(error.message || "Ошибка при обновлении участия");
+    } finally {
+      setMutating(false);
+      setShowConfirmModal(false);
+      setConfirmAction(null);
     }
   };
 
@@ -389,9 +401,10 @@ END:VCALENDAR`;
             <motion.button
               whileTap={{ scale: 0.97 }}
               onClick={handleJoinClick}
+              disabled={mutating}
               className="flex-1 py-3.5 rounded-full text-[17px] font-bold bg-gradient-to-r from-[#ff3b30] to-[#ff453a] text-white"
             >
-              Слив
+              {mutating ? "..." : "Слив"}
             </motion.button>
           </div>
         )}
@@ -412,9 +425,10 @@ END:VCALENDAR`;
             <motion.button
               whileTap={{ scale: 0.97 }}
               onClick={handleJoinClick}
+              disabled={mutating}
               className="flex-1 py-3.5 rounded-full text-[17px] font-bold bg-gradient-to-r from-[#34C759] to-[#30D158] text-white"
             >
-              Джойн
+              {mutating ? "..." : "Джойн"}
             </motion.button>
           </div>
         </div>
@@ -435,6 +449,7 @@ END:VCALENDAR`;
             <motion.button
               whileTap={{ scale: 0.97 }}
               onClick={handleJoinClick}
+              disabled={mutating}
               className={`flex-1 py-3.5 rounded-full text-[17px] font-bold ${
                 event.participationStatus === "pending"
                   ? "bg-[#8e8e93] text-white"

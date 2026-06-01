@@ -5,6 +5,7 @@ import { Upload, MapPin } from "lucide-react";
 import NavigationBar from "./NavigationBar";
 import { eventApi } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { deleteStorageAsset, uploadImageAsset } from "../../utils/storage";
 
 export default function EditEvent() {
   const navigate = useNavigate();
@@ -24,6 +25,8 @@ export default function EditEvent() {
     image: "",
   });
   const [imagePreview, setImagePreview] = useState("");
+  const [originalImage, setOriginalImage] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
     loadEvent();
@@ -45,8 +48,8 @@ export default function EditEvent() {
       setFormData({
         title: event.title,
         location: event.location,
-        date: event.date,
-        time: event.time,
+        date: event.dateValue || event.date,
+        time: event.timeValue || event.time,
         category: event.category,
         maxAttendees: event.maxAttendees,
         isPrivate: event.isPrivate || false,
@@ -56,6 +59,7 @@ export default function EditEvent() {
         image: event.image,
       });
       setImagePreview(event.image);
+      setOriginalImage(event.image);
     } catch (error) {
       console.error("Error loading event:", error);
       alert("Ошибка загрузки события");
@@ -65,19 +69,38 @@ export default function EditEvent() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setFormData({ ...formData, image: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const input = e.currentTarget;
+    const previousPreview = imagePreview;
+    const previewUrl = URL.createObjectURL(file);
+
+    setImagePreview(previewUrl);
+    setUploadingImage(true);
+
+    try {
+      const imageUrl = await uploadImageAsset(file, "event-cover");
+      setImagePreview(imageUrl);
+      setFormData((current) => ({ ...current, image: imageUrl }));
+    } catch (error) {
+      console.error("Error uploading event image:", error);
+      setImagePreview(previousPreview);
+      alert(error instanceof Error ? error.message : "Ошибка загрузки изображения");
+    } finally {
+      URL.revokeObjectURL(previewUrl);
+      input.value = "";
+      setUploadingImage(false);
     }
   };
 
   const handleSave = async () => {
+    if (uploadingImage) {
+      alert("Дождитесь завершения загрузки изображения");
+      return;
+    }
+
     if (!formData.title || !formData.location || !formData.date || !formData.time) {
       alert("Заполните все обязательные поля");
       return;
@@ -86,6 +109,11 @@ export default function EditEvent() {
     try {
       const currentUserId = getCurrentUserId();
       await eventApi.update(id!, formData, currentUserId);
+      if (formData.image && formData.image !== originalImage) {
+        deleteStorageAsset(originalImage).catch((error) => {
+          console.warn("Could not delete previous event image:", error);
+        });
+      }
       navigate(-1);
     } catch (error) {
       console.error("Error updating event:", error);
@@ -124,9 +152,10 @@ export default function EditEvent() {
         rightButton={
           <button
             onClick={handleSave}
-            className="text-[#34C759] text-[17px] font-semibold"
+            disabled={uploadingImage}
+            className={`text-[17px] font-semibold ${uploadingImage ? "text-[#3c3c43]/30" : "text-[#34C759]"}`}
           >
-            Готово
+            {uploadingImage ? "Загрузка..." : "Готово"}
           </button>
         }
       />
@@ -138,13 +167,23 @@ export default function EditEvent() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white/90 backdrop-blur-2xl rounded-2xl overflow-hidden shadow-lg border border-white/20"
         >
-          <label className="block cursor-pointer">
-            <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+          <label className={`block ${uploadingImage ? "cursor-wait" : "cursor-pointer"}`}>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImageUpload}
+              disabled={uploadingImage}
+              className="hidden"
+            />
             {imagePreview ? (
               <div className="relative h-48">
                 <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                  <Upload className="w-8 h-8 text-white" />
+                  {uploadingImage ? (
+                    <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Upload className="w-8 h-8 text-white" />
+                  )}
                 </div>
               </div>
             ) : (

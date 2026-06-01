@@ -2,7 +2,8 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight, Upload, Check } from "lucide-react";
 import { userApi } from "../../utils/api";
-import { getCurrentUserId } from "../../utils/auth";
+import { ensureCurrentUserId, markRegistrationComplete } from "../../utils/auth";
+import { uploadImageAsset } from "../../utils/storage";
 
 interface RegistrationProps {
   onComplete: () => void;
@@ -21,17 +22,31 @@ export default function Registration({ onComplete }: RegistrationProps) {
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
   const [checkingUsername, setCheckingUsername] = useState(false);
   const [imagePreview, setImagePreview] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setImagePreview(result);
-        setFormData({ ...formData, avatar: result });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const input = e.currentTarget;
+    const previousPreview = imagePreview;
+    const previewUrl = URL.createObjectURL(file);
+
+    setImagePreview(previewUrl);
+    setUploadingImage(true);
+
+    try {
+      const avatarUrl = await uploadImageAsset(file, "avatar");
+      setImagePreview(avatarUrl);
+      setFormData((current) => ({ ...current, avatar: avatarUrl }));
+    } catch (error) {
+      console.error("Error uploading avatar:", error);
+      setImagePreview(previousPreview);
+      alert(error instanceof Error ? error.message : "Ошибка загрузки изображения");
+    } finally {
+      URL.revokeObjectURL(previewUrl);
+      input.value = "";
+      setUploadingImage(false);
     }
   };
 
@@ -61,7 +76,7 @@ export default function Registration({ onComplete }: RegistrationProps) {
 
   const handleComplete = async () => {
     try {
-      const currentUserId = getCurrentUserId();
+      const currentUserId = await ensureCurrentUserId();
       await userApi.create({
         id: currentUserId,
         name: formData.name,
@@ -73,10 +88,8 @@ export default function Registration({ onComplete }: RegistrationProps) {
         availableForInvites: true,
       });
 
-      // Отмечаем, что пользователь зарегистрирован
-      localStorage.setItem("user_registered", "true");
+      await markRegistrationComplete();
 
-      // Вызываем callback для обновления состояния
       onComplete();
     } catch (error) {
       console.error("Error creating user:", error);
@@ -245,20 +258,26 @@ export default function Registration({ onComplete }: RegistrationProps) {
                 Это необязательно, но фото помогает людям узнать вас
               </p>
 
-              <label className="block cursor-pointer">
+              <label className={`block ${uploadingImage ? "cursor-wait" : "cursor-pointer"}`}>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp"
                   onChange={handleImageUpload}
+                  disabled={uploadingImage}
                   className="hidden"
                 />
                 {imagePreview ? (
-                  <div className="w-32 h-32 mx-auto rounded-full overflow-hidden border-4 border-[#34C759]">
+                  <div className="relative w-32 h-32 mx-auto rounded-full overflow-hidden border-4 border-[#34C759]">
                     <img
                       src={imagePreview}
                       alt="Preview"
                       className="w-full h-full object-cover"
                     />
+                    {uploadingImage && (
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <div className="w-7 h-7 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="w-32 h-32 mx-auto rounded-full bg-[#f2f2f7] flex flex-col items-center justify-center border-2 border-dashed border-[#c6c6c8]">
@@ -278,10 +297,19 @@ export default function Registration({ onComplete }: RegistrationProps) {
                 <motion.button
                   whileTap={{ scale: 0.97 }}
                   onClick={() => setStep(4)}
-                  className="flex-1 py-4 rounded-2xl bg-[#34C759] text-white text-[17px] font-bold flex items-center justify-center gap-2"
+                  disabled={uploadingImage}
+                  className={`flex-1 py-4 rounded-2xl text-white text-[17px] font-bold flex items-center justify-center gap-2 ${
+                    uploadingImage ? "bg-[#e5e5ea]" : "bg-[#34C759]"
+                  }`}
                 >
-                  Продолжить
-                  <ChevronRight className="w-5 h-5" />
+                  {uploadingImage ? (
+                    "Загрузка..."
+                  ) : (
+                    <>
+                      Продолжить
+                      <ChevronRight className="w-5 h-5" />
+                    </>
+                  )}
                 </motion.button>
               </div>
             </motion.div>

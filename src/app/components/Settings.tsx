@@ -3,31 +3,74 @@ import { useNavigate } from "react-router-dom";
 import { ChevronRight, User, Bell, Lock, HelpCircle, LogOut, Trash2, EyeOff } from "lucide-react";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
-import { userProfile } from "../data/mockData";
-import { getCurrentUserId } from "../../utils/auth";
+import { clearLocalAppSession, getCurrentUserId, signOutCurrentUser } from "../../utils/auth";
+import { settingsApi, userApi, type User as AppUser } from "../../utils/api";
 
 export default function Settings() {
   const navigate = useNavigate();
-  const [availableForInvites, setAvailableForInvites] = useState(userProfile.availableForInvites);
+  const [profile, setProfile] = useState<AppUser | null>(null);
   const [hideMyEvents, setHideMyEvents] = useState(false);
+  const [availableForInvites, setAvailableForInvites] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const currentUserId = getCurrentUserId();
-    const hideEvents = localStorage.getItem(`user:${currentUserId}:hideEvents`) === "true";
-    setHideMyEvents(hideEvents);
+    let active = true;
+
+    const loadSettings = async () => {
+      try {
+        const currentUserId = getCurrentUserId();
+        const [currentProfile, currentSettings] = await Promise.all([
+          userApi.get(currentUserId),
+          settingsApi.get(currentUserId),
+        ]);
+
+        if (!active) return;
+        setProfile(currentProfile);
+        setAvailableForInvites(currentProfile.availableForInvites);
+        setHideMyEvents(currentSettings.hideEvents);
+      } catch (error) {
+        console.error("Error loading settings:", error);
+        if (active) {
+          alert("Не удалось загрузить настройки");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void loadSettings();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const toggleInvites = () => {
+  const toggleInvites = async () => {
+    if (!profile) return;
+
     const newValue = !availableForInvites;
     setAvailableForInvites(newValue);
-    userProfile.availableForInvites = newValue;
+    try {
+      const updated = await userApi.update(profile.id, { availableForInvites: newValue });
+      setProfile(updated);
+    } catch (error) {
+      console.error("Error updating invite setting:", error);
+      setAvailableForInvites(!newValue);
+      alert("Не удалось сохранить настройку");
+    }
   };
 
-  const toggleHideMyEvents = () => {
+  const toggleHideMyEvents = async () => {
+    if (!profile) return;
+
     const newValue = !hideMyEvents;
     setHideMyEvents(newValue);
-    const currentUserId = getCurrentUserId();
-    localStorage.setItem(`user:${currentUserId}:hideEvents`, newValue.toString());
+    try {
+      await settingsApi.update(profile.id, { hideEvents: newValue });
+    } catch (error) {
+      console.error("Error updating privacy setting:", error);
+      setHideMyEvents(!newValue);
+      alert("Не удалось сохранить настройку");
+    }
   };
 
   const resetApp = () => {
@@ -44,9 +87,18 @@ export default function Settings() {
       return;
     }
 
-    localStorage.removeItem("user_registered");
-    localStorage.removeItem("onboarding_completed");
+    clearLocalAppSession();
     window.location.reload();
+  };
+
+  const signOut = async () => {
+    try {
+      await signOutCurrentUser();
+      window.location.reload();
+    } catch (error) {
+      console.error("Error signing out:", error);
+      alert("Не удалось выйти из аккаунта");
+    }
   };
 
   const settingsSections = [
@@ -76,7 +128,7 @@ export default function Settings() {
     },
     {
       items: [
-        { icon: LogOut, label: "Выйти", value: "", danger: true },
+        { icon: LogOut, label: "Выйти", value: "", action: signOut, danger: true },
       ]
     },
     {
@@ -87,6 +139,17 @@ export default function Settings() {
       ]
     }
   ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f2f2f7]">
+        <NavigationBar title="Настройки" showBack />
+        <div className="flex justify-center py-16">
+          <div className="w-10 h-10 border-4 border-[#34C759] border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f2f2f7]">
@@ -101,14 +164,14 @@ export default function Settings() {
         <div className="flex flex-col items-center">
           <div className="w-24 h-24 rounded-full overflow-hidden bg-[#c6c6c8] mb-3">
             <img
-              src={userProfile.avatar}
-              alt={userProfile.name}
+              src={profile?.avatar || ""}
+              alt={profile?.name || "Профиль"}
               className="w-full h-full object-cover"
             />
           </div>
-          <h2 className="text-[22px] font-bold text-black mb-1">{userProfile.name}</h2>
-          <p className="text-[15px] text-[#3c3c43]/60 mb-1">@{userProfile.username}</p>
-          <p className="text-[15px] text-[#3c3c43]/60">{userProfile.phone}</p>
+          <h2 className="text-[22px] font-bold text-black mb-1">{profile?.name || "Профиль"}</h2>
+          {profile?.username && <p className="text-[15px] text-[#3c3c43]/60 mb-1">@{profile.username}</p>}
+          {profile?.phone && <p className="text-[15px] text-[#3c3c43]/60">{profile.phone}</p>}
         </div>
       </motion.div>
 

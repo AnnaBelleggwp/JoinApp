@@ -3,14 +3,14 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { Calendar, MapPin, MessageCircle } from "lucide-react";
 import NavigationBar from "./NavigationBar";
-import { userApi, eventApi, chatApi } from "../../utils/api";
+import { userApi, eventApi, chatApi, settingsApi, type Event, type User } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function UserProfile() {
   const { userId } = useParams();
   const navigate = useNavigate();
-  const [user, setUser] = useState<any>(null);
-  const [events, setEvents] = useState<any[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [hideEvents, setHideEvents] = useState(false);
 
@@ -29,11 +29,9 @@ export default function UserProfile() {
       const userData = await userApi.get(userId!);
       setUser(userData);
 
-      // Проверяем настройку скрытия событий
-      const hideEventsSetting = localStorage.getItem(`user:${userId}:hideEvents`) === "true";
+      const hideEventsSetting = userId === currentUserId ? false : (await settingsApi.getProfilePrivacy(userId!)).hideEvents;
       setHideEvents(hideEventsSetting);
 
-      // Если события не скрыты или это текущий пользователь, показываем события
       if (!hideEventsSetting || userId === currentUserId) {
         const allEvents = await eventApi.getAll();
         const userEvents = allEvents.filter(
@@ -70,32 +68,9 @@ export default function UserProfile() {
 
   const handleStartChat = async () => {
     try {
-      // Создаем ID чата на основе ID двух пользователей (сортируем чтобы всегда получался один и тот же ID)
-      const chatId = [currentUserId, userId].sort().join("_");
-      console.log("Creating/finding chat with ID:", chatId);
-
-      // Проверяем, существует ли уже чат
-      let chat = await chatApi.get(chatId);
-      console.log("Existing chat:", chat);
-
-      // Если чата нет, создаем его
-      if (!chat) {
-        console.log("Chat not found, creating new chat");
-        chat = await chatApi.create({
-          id: chatId,
-          name: user.name,
-          avatar: user.avatar,
-          lastMessage: "",
-          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          unread: 0,
-          isEventChat: false,
-        });
-        console.log("Created chat:", chat);
-      }
-
-      // Переходим в чат
-      console.log("Navigating to chat:", `/chat/${chatId}`);
-      navigate(`/chat/${chatId}`);
+      if (!userId) return;
+      const chat = await chatApi.getOrCreateDirect(userId);
+      navigate(`/chat/${chat.id}`);
     } catch (error) {
       console.error("Error starting chat:", error);
       alert(`Ошибка создания чата: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`);

@@ -3,9 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Send, Smile, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import NavigationBar from "./NavigationBar";
-import { Message, Chat } from "../data/mockData";
-import { chatApi, userApi, User } from "../../utils/api";
+import { chatApi, userApi, type Chat, type Message, type User } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { uploadChatImageAttachment } from "../../utils/storage";
 
 interface MessageWithUser extends Message {
   user?: User;
@@ -17,6 +17,7 @@ export default function ChatScreen() {
   const [chat, setChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<MessageWithUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +104,34 @@ export default function ChatScreen() {
     }
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !id) return;
+
+    const input = e.currentTarget;
+    setUploadingImage(true);
+
+    try {
+      const attachmentPath = await uploadChatImageAttachment(file, id);
+      const currentUserId = getCurrentUserId();
+      const newMessage = await chatApi.sendMessage(id, {
+        text: "",
+        kind: "image",
+        attachmentPath,
+        attachmentUrl: attachmentPath.startsWith("data:") ? attachmentPath : undefined,
+        isMine: true,
+      }, currentUserId);
+
+      setMessages((prevMessages) => [...prevMessages, newMessage]);
+    } catch (error) {
+      console.error("Error sending image:", error);
+      alert(error instanceof Error ? error.message : `Ошибка отправки изображения: ${error}`);
+    } finally {
+      input.value = "";
+      setUploadingImage(false);
+    }
+  };
+
   if (!chat) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#f2f2f7] to-white flex items-center justify-center">
@@ -116,13 +145,13 @@ export default function ChatScreen() {
       // Для чата события переходим к событию
       navigate(`/event/${chat.eventId}`);
     } else {
-      // Для личного чата переходим к профилю собеседника
-      const currentUserId = getCurrentUserId();
-      const userIds = id!.split("_");
-      const otherUserId = userIds.find(uid => uid !== currentUserId);
-      if (otherUserId) {
-        navigate(`/user/${otherUserId}`);
+      if (chat.peerUserId) {
+        navigate(`/user/${chat.peerUserId}`);
+        return;
       }
+
+      const firstMessageFromPeer = messages.find((message) => !message.isMine && message.userId);
+      if (firstMessageFromPeer?.userId) navigate(`/user/${firstMessageFromPeer.userId}`);
     }
   };
 
@@ -187,13 +216,21 @@ export default function ChatScreen() {
                   </p>
                 )}
                 <div
-                  className={`rounded-[20px] px-4 py-2.5 ${
+                  className={`rounded-[20px] ${
                     message.isMine
                       ? "bg-gradient-to-br from-[#34C759] to-[#30D158] text-white rounded-br-sm"
                       : "bg-white text-black border border-[#c6c6c8]/30 rounded-bl-sm"
-                  }`}
+                  } ${message.kind === "image" ? "overflow-hidden p-1" : "px-4 py-2.5"}`}
                 >
-                  <p className="text-[17px] leading-snug">{message.text}</p>
+                  {message.kind === "image" && message.attachmentUrl ? (
+                    <img
+                      src={message.attachmentUrl}
+                      alt="Вложение"
+                      className="max-h-72 w-full rounded-[16px] object-cover"
+                    />
+                  ) : (
+                    <p className="text-[17px] leading-snug">{message.text}</p>
+                  )}
                 </div>
                 <p className="text-[13px] text-[#3c3c43]/50 mt-1 px-3">
                   {message.time}
@@ -209,9 +246,22 @@ export default function ChatScreen() {
       {/* Поле ввода */}
       <div className="border-t border-white/20 px-4 py-3 bg-white/70 backdrop-blur-2xl shadow-[0_-2px_20px_rgba(0,0,0,0.08)]">
         <div className="flex items-end gap-2">
-          <button className="w-9 h-9 rounded-full bg-[#e5e5ea] flex items-center justify-center flex-shrink-0">
-            <ImageIcon className="w-5 h-5 text-[#34C759]" />
-          </button>
+          <label className={`w-9 h-9 rounded-full bg-[#e5e5ea] flex items-center justify-center flex-shrink-0 ${
+            uploadingImage ? "cursor-wait" : "cursor-pointer"
+          }`}>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={handleImageUpload}
+              disabled={uploadingImage}
+              className="hidden"
+            />
+            {uploadingImage ? (
+              <div className="w-5 h-5 border-2 border-[#34C759] border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <ImageIcon className="w-5 h-5 text-[#34C759]" />
+            )}
+          </label>
           
           <div className="flex-1 bg-white/90 backdrop-blur-xl rounded-[20px] border border-white/30 px-4 py-2 flex items-center gap-2 min-h-[40px]">
             <input

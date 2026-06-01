@@ -5,6 +5,7 @@ import { Upload, MapPin } from "lucide-react";
 import NavigationBar from "./NavigationBar";
 import { eventApi } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { uploadImageAsset } from "../../utils/storage";
 
 export default function CreateEvent() {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ export default function CreateEvent() {
     image: "",
   });
   const [imagePreview, setImagePreview] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState("");
 
   const checkDuplicates = async (title: string, location: string) => {
@@ -47,19 +49,38 @@ export default function CreateEvent() {
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setFormData({ ...formData, image: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const input = e.currentTarget;
+    const previousPreview = imagePreview;
+    const previewUrl = URL.createObjectURL(file);
+
+    setImagePreview(previewUrl);
+    setUploadingImage(true);
+
+    try {
+      const imageUrl = await uploadImageAsset(file, "event-cover");
+      setImagePreview(imageUrl);
+      setFormData((current) => ({ ...current, image: imageUrl }));
+    } catch (error) {
+      console.error("Error uploading event image:", error);
+      setImagePreview(previousPreview);
+      alert(error instanceof Error ? error.message : "Ошибка загрузки изображения");
+    } finally {
+      URL.revokeObjectURL(previewUrl);
+      input.value = "";
+      setUploadingImage(false);
     }
   };
 
   const handleCreate = async () => {
+    if (uploadingImage) {
+      alert("Дождитесь завершения загрузки изображения");
+      return;
+    }
+
     // Проверка обязательных полей
     if (!formData.title || !formData.location || !formData.date || !formData.time) {
       alert("Заполните все обязательные поля");
@@ -108,11 +129,12 @@ export default function CreateEvent() {
           animate={{ opacity: 1, y: 0 }}
           className="bg-white/90 backdrop-blur-2xl rounded-2xl overflow-hidden shadow-lg border border-white/20"
         >
-          <label className="block cursor-pointer">
+          <label className={`block ${uploadingImage ? "cursor-wait" : "cursor-pointer"}`}>
             <input
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp"
               onChange={handleImageUpload}
+              disabled={uploadingImage}
               className="hidden"
             />
             {imagePreview ? (
@@ -123,7 +145,11 @@ export default function CreateEvent() {
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                  <Upload className="w-8 h-8 text-white" />
+                  {uploadingImage ? (
+                    <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Upload className="w-8 h-8 text-white" />
+                  )}
                 </div>
               </div>
             ) : (
@@ -370,9 +396,12 @@ export default function CreateEvent() {
           transition={{ delay: 0.45 }}
           whileTap={{ scale: 0.97 }}
           onClick={handleCreate}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#34C759] to-[#30D158] text-white text-[17px] font-bold"
+          disabled={uploadingImage}
+          className={`w-full py-4 rounded-2xl text-white text-[17px] font-bold ${
+            uploadingImage ? "bg-[#e5e5ea]" : "bg-gradient-to-r from-[#34C759] to-[#30D158]"
+          }`}
         >
-          Создать событие
+          {uploadingImage ? "Загрузка фото..." : "Создать событие"}
         </motion.button>
       </div>
     </div>

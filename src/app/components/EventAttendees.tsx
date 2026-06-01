@@ -2,15 +2,15 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
-import { eventApi } from "../../utils/api";
+import { attendeeApi, eventApi, type Event, type EventAttendee } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function EventAttendees() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [event, setEvent] = useState<any>(null);
+  const [event, setEvent] = useState<Event | null>(null);
   const [loading, setLoading] = useState(true);
-  const [attendees, setAttendees] = useState<any[]>([]);
+  const [attendees, setAttendees] = useState<EventAttendee[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -32,34 +32,7 @@ export default function EventAttendees() {
       }
 
       setEvent(eventData);
-
-      // Генерируем список участников для демо
-      const mockAttendees = Array.from(
-        { length: Math.min(eventData.attendees, 50) },
-        (_, i) => ({
-          id: i.toString(),
-          name: [
-            "Александр Иванов",
-            "Мария Петрова",
-            "Дмитрий Козлов",
-            "Анна Волкова",
-            "Иван Сидоров",
-            "Елена Тихонова",
-            "Сергей Михайлов",
-            "Ольга Николаева",
-            "Петр Алексеев",
-            "Наталья Соколова",
-            "Андрей Павлов",
-            "Екатерина Смирнова",
-            "Владимир Кузнецов",
-            "Татьяна Попова",
-            "Михаил Васильев",
-          ][i % 15] || `Участник ${i + 1}`,
-          avatar: `https://i.pravatar.cc/150?img=${i + 1}`,
-        })
-      );
-
-      setAttendees(mockAttendees);
+      setAttendees(await attendeeApi.getForEvent(id!));
     } catch (error) {
       console.error("Error loading attendees:", error);
       alert("Ошибка загрузки участников");
@@ -98,7 +71,7 @@ export default function EventAttendees() {
           <div className="space-y-3">
             {attendees.map((attendee, index) => (
               <motion.div
-                key={attendee.id}
+                key={`${attendee.eventId}:${attendee.userId}`}
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: index * 0.03 }}
@@ -106,16 +79,16 @@ export default function EventAttendees() {
               >
                 <div className="w-12 h-12 rounded-full bg-[#c6c6c8] overflow-hidden flex-shrink-0">
                   <img
-                    src={attendee.avatar}
-                    alt={attendee.name}
+                    src={attendee.user.avatar}
+                    alt={attendee.user.name}
                     className="w-full h-full object-cover"
                   />
                 </div>
                 <div className="flex-1">
                   <p className="text-[17px] text-black font-medium">
-                    {attendee.name}
+                    {attendee.user.name}
                   </p>
-                  {index === 0 && (
+                  {attendee.role === "organizer" && (
                     <p className="text-[13px] text-[#ff9500]">Организатор</p>
                   )}
                 </div>

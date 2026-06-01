@@ -48,6 +48,16 @@ export interface User {
   updatedAt?: string;
 }
 
+export interface UserSettings {
+  hideEvents: boolean;
+  allowDirectMessages: boolean;
+  allowPushNotifications: boolean;
+}
+
+export interface ProfilePrivacy {
+  hideEvents: boolean;
+}
+
 export const userApi = {
   search: async (query: string): Promise<User[]> => {
     const users = getAllByPrefix<User>("user:");
@@ -98,6 +108,31 @@ export const userApi = {
   },
 };
 
+export const settingsApi = {
+  get: async (userId: string): Promise<UserSettings> => {
+    return (
+      getFromStorage<UserSettings>(`settings:${userId}`) || {
+        hideEvents: localStorage.getItem(`user:${userId}:hideEvents`) === "true",
+        allowDirectMessages: true,
+        allowPushNotifications: true,
+      }
+    );
+  },
+
+  update: async (userId: string, data: Partial<UserSettings>): Promise<UserSettings> => {
+    const current = await settingsApi.get(userId);
+    const updated = { ...current, ...data };
+    setToStorage(`settings:${userId}`, updated);
+    localStorage.setItem(`user:${userId}:hideEvents`, String(updated.hideEvents));
+    return updated;
+  },
+
+  getProfilePrivacy: async (userId: string): Promise<ProfilePrivacy> => {
+    const settings = await settingsApi.get(userId);
+    return { hideEvents: settings.hideEvents };
+  },
+};
+
 // ============ СОБЫТИЯ ============
 
 export type ParticipationStatus = "none" | "joined" | "pending" | "rejected";
@@ -110,11 +145,22 @@ export interface EventRequest {
   createdAt: string;
 }
 
+export interface EventAttendee {
+  eventId: string;
+  userId: string;
+  role: "organizer" | "attendee";
+  joinedAt: string;
+  user: User;
+}
+
 export interface Event {
   id: string;
   title: string;
   date: string;
   time: string;
+  dateValue?: string;
+  timeValue?: string;
+  startsAt?: string;
   location: string;
   attendees: number;
   maxAttendees: number;
@@ -127,11 +173,34 @@ export interface Event {
   category: string;
   latitude: number;
   longitude: number;
+  distanceMeters?: number | null;
   isPrivate?: boolean;
   requiresApproval?: boolean;
   hideAttendees?: boolean;
   pendingRequestsCount?: number;
   createdAt?: string;
+}
+
+export interface EventDiscoveryParams {
+  latitude?: number;
+  longitude?: number;
+  radiusMeters?: number;
+  startsAfter?: string;
+  categoryId?: string | null;
+  limit?: number;
+}
+
+function distanceMetersBetween(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const earthRadiusMeters = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return 2 * earthRadiusMeters * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export const eventApi = {
@@ -164,6 +233,32 @@ export const eventApi = {
       });
   },
 
+  discover: async (params: EventDiscoveryParams = {}): Promise<Event[]> => {
+    const events = await eventApi.getAll();
+    const hasOrigin = params.latitude != null && params.longitude != null;
+    const startsAfter = params.startsAfter ? new Date(params.startsAfter).getTime() : 0;
+    const radiusMeters = params.radiusMeters || 10000;
+
+    return events
+      .map((event) => {
+        if (!hasOrigin) return { ...event, distanceMeters: null };
+        return {
+          ...event,
+          distanceMeters: distanceMetersBetween(params.latitude!, params.longitude!, event.latitude, event.longitude),
+        };
+      })
+      .filter((event) => {
+        if (startsAfter && event.startsAt && new Date(event.startsAt).getTime() < startsAfter) return false;
+        if (hasOrigin && (event.distanceMeters == null || event.distanceMeters > radiusMeters)) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (hasOrigin) return (a.distanceMeters || 0) - (b.distanceMeters || 0);
+        return new Date(a.startsAt || a.createdAt || 0).getTime() - new Date(b.startsAt || b.createdAt || 0).getTime();
+      })
+      .slice(0, params.limit || 50);
+  },
+
   get: async (id: string): Promise<Event> => {
     const event = getFromStorage<Event>(`event:${id}`);
     if (!event) throw new Error("Event not found");
@@ -190,7 +285,7 @@ export const eventApi = {
     };
   },
 
-  create: async (event: Omit<Event, "id" | "createdAt" | "attendees" | "isJoined">) => {
+  create: async (event: Omit<Event, "id" | "createdAt" | "attendees" | "isJoined" | "participationStatus" | "pendingRequestsCount">) => {
     // Проверка на дубликаты
     const allEvents = getAllByPrefix<Event>("event:");
     const duplicate = allEvents.find(e =>
@@ -356,6 +451,7 @@ export interface Chat {
   unread: number;
   isEventChat?: boolean;
   eventId?: string;
+  peerUserId?: string;
 }
 
 export interface Message {
@@ -363,6 +459,9 @@ export interface Message {
   text: string;
   time: string;
   isMine: boolean;
+  kind?: "text" | "image" | "system";
+  attachmentPath?: string;
+  attachmentUrl?: string;
   sender?: string;
   userId?: string;
   createdAt?: string;
@@ -391,6 +490,30 @@ export const chatApi = {
     setToStorage(`chat:${chat.id}`, chatWithDefaults);
     setToStorage(`chat:${chat.id}:messages`, []);
     return chatWithDefaults;
+  },
+
+  getOrCreateDirect: async (otherUserId: string): Promise<Chat> => {
+    const currentUserId = getCurrentUserId();
+    const chatId = [currentUserId, otherUserId].sort().join("_");
+    const existing = await chatApi.get(chatId);
+    if (existing) return existing;
+
+    const otherUser = await userApi.get(otherUserId);
+    return chatApi.create({
+      id: chatId,
+      name: otherUser.name,
+      avatar: otherUser.avatar,
+      lastMessage: "",
+      time: new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+      unread: 0,
+      isEventChat: false,
+      peerUserId: otherUserId,
+    });
+  },
+
+  getForEvent: async (eventId: string): Promise<Chat | null> => {
+    const chatId = getFromStorage<string>(`event:${eventId}:chatId`);
+    return chatId ? chatApi.get(chatId) : null;
   },
 
   getAll: async (userId: string): Promise<Chat[]> => {
@@ -452,6 +575,9 @@ export const chatApi = {
     const newMessage = {
       ...message,
       text: message.text || "",
+      kind: message.kind || "text",
+      attachmentPath: message.attachmentPath,
+      attachmentUrl: message.attachmentUrl || message.attachmentPath,
       userId: userId || getCurrentUserId(),
       sender: senderName,
       id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -465,7 +591,7 @@ export const chatApi = {
     // Обновляем последнее сообщение в чате
     const chat = getFromStorage<Chat>(`chat:${chatId}`);
     if (chat) {
-      chat.lastMessage = newMessage.text || "";
+      chat.lastMessage = newMessage.kind === "image" ? "Image" : newMessage.text || "";
       chat.time = newMessage.time;
       setToStorage(`chat:${chatId}`, chat);
     }
@@ -527,5 +653,32 @@ export const requestApi = {
   delete: async (requestId: string) => {
     localStorage.removeItem(requestId);
     return { success: true };
+  },
+};
+
+export const attendeeApi = {
+  getForEvent: async (eventId: string): Promise<EventAttendee[]> => {
+    const event = await eventApi.get(eventId);
+    const attendeeIds = getFromStorage<string[]>(`event:${eventId}:attendees`) || [];
+
+    const attendees = await Promise.all(
+      attendeeIds.map(async (userId) => {
+        try {
+          const user = await userApi.get(userId);
+          return {
+            eventId,
+            userId,
+            role: userId === event.organizerId ? "organizer" as const : "attendee" as const,
+            joinedAt: event.createdAt || new Date().toISOString(),
+            user,
+          };
+        } catch (error) {
+          console.error("Error loading attendee user:", error);
+          return null;
+        }
+      }),
+    );
+
+    return attendees.filter((attendee): attendee is EventAttendee => attendee !== null);
   },
 };

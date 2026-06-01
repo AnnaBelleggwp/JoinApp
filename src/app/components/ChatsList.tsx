@@ -4,14 +4,14 @@ import { Search } from "lucide-react";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
 import SearchModal from "./SearchModal";
-import { userProfile, Chat } from "../data/mockData";
-import { chatApi, userApi } from "../../utils/api";
+import { chatApi, userApi, type Chat, type User } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
 
 export default function ChatsList() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,9 +23,13 @@ export default function ChatsList() {
       setLoading(true);
       const currentUserId = getCurrentUserId();
       console.log(`Loading chats for user ${currentUserId}`);
-      const data = await chatApi.getAll(currentUserId);
+      const [data, profile] = await Promise.all([
+        chatApi.getAll(currentUserId),
+        userApi.get(currentUserId),
+      ]);
       console.log(`Loaded ${data.length} chats:`, data);
       setChats(data);
+      setCurrentUser(profile);
     } catch (error) {
       console.error("Error loading chats:", error);
       alert(`Ошибка загрузки чатов: ${error}`);
@@ -67,8 +71,8 @@ export default function ChatsList() {
             <Link to="/settings">
               <button className="w-9 h-9 rounded-full overflow-hidden border-2 border-[#34C759]/20">
                 <img
-                  src={userProfile.avatar}
-                  alt={userProfile.name}
+                  src={currentUser?.avatar || ""}
+                  alt={currentUser?.name || "Профиль"}
                   className="w-full h-full object-cover"
                 />
               </button>
