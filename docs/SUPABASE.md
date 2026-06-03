@@ -59,6 +59,9 @@ supabase gen types typescript --project-id <project-ref> > packages/db/src/index
 - `20260601000300_read_models.sql`: `event_cards` read model for mobile/web event lists and details.
 - `20260601000400_storage_buckets.sql`: Storage buckets and owner/conversation-scoped object policies for avatars, event covers, and chat attachments.
 - `20260601000500_nearby_events.sql`: PostGIS-powered event discovery RPC with optional origin/radius filtering.
+- `20260602000100_realtime_core.sql`: Supabase Realtime publication entries for events, chats, requests, and attendee tables.
+- `20260602000200_discovery_filters.sql`: expands `nearby_events` with server-side search, date, category, attendee, and availability filters.
+- `20260602000300_notifications_core.sql`: push-token RPCs, notification read RPCs, unread count RPC, and realtime publication for notifications.
 
 ## Event Discovery
 
@@ -70,13 +73,27 @@ Event discovery is served by `nearby_events`. The function supports both normal 
 - limit is clamped between 1 and 100;
 - results include `distance_meters` when an origin is provided.
 
+Discovery filters run on the server:
+
+- `query`: searches title, description, location name, address, and city;
+- `categoryId` or `categoryName`;
+- `startsAfter` and `startsBefore`;
+- `minAttendees` and `maxAttendeesCount`;
+- `hasAvailableSeats`.
+
 This keeps GPS optional. Clients can call the same function with:
 
 - no coordinates for a default feed;
 - coordinates from system geolocation after user consent;
 - coordinates from a manually selected city or map point.
 
-The Vite adapter exposes this through `eventApi.discover(params)`. Existing `eventApi.getAll()` is now a compatibility wrapper around discovery without coordinates.
+The Vite adapter exposes this through `eventApi.discover(params)`. Existing `eventApi.getAll()` is now a compatibility wrapper around discovery without coordinates. `EventsList` uses `discover(params)` directly, so search, category, date, and attendee filters no longer require loading all events into the client first.
+
+The current UI supports manual discovery location without requesting GPS:
+
+- `Вся лента`: no coordinates, default upcoming feed;
+- preset cities: coordinates plus radius are sent to `nearby_events`;
+- selected city/radius are stored locally on the client and can be changed without account-level location tracking.
 
 ## Storage
 
@@ -178,6 +195,50 @@ When onboarding is completed in Supabase mode, `markOnboardingComplete()` update
 
 Simple reads may use Supabase queries when RLS is sufficient. Complex reads should become views or RPC functions once query shape stabilizes.
 
+## Realtime
+
+The first realtime layer publishes:
+
+- `messages`
+- `conversations`
+- `conversation_members`
+- `events`
+- `event_locations`
+- `event_requests`
+- `event_attendees`
+- `notifications`
+
+The Vite client currently uses `src/utils/realtime.ts` as the realtime boundary:
+
+- `ChatScreen` subscribes to `messages` for the active conversation and reloads messages through the normal RLS-protected API after changes.
+- `ChatsList` subscribes to the current user's `conversation_members` rows and to `conversations` updates, so message previews and new memberships refresh without manual reload.
+- `EventDetails` subscribes to event, location, request, and attendee changes for the active event, so counters and participation state refresh.
+- `EventRequests` subscribes to request changes for the active event, so organizers see pending requests update.
+- `MyEvents` subscribes to organizer event changes plus the current user's request/attendee rows, so badges and participation statuses refresh.
+- `NotificationBell` and `NotificationsScreen` subscribe to current-user notification rows.
+
+Reload-after-event is intentionally conservative for this stage. It avoids duplicating message mapping, signed attachment URL generation, and direct-chat peer resolution inside realtime payload handlers. Later we can optimize this with incremental payload mapping if profiling shows a need.
+
+## Notifications
+
+The current notification layer is push-ready but does not send external push yet.
+
+Backend contracts:
+
+- `register_push_token(platform, token)` stores or reassigns a token for `ios`, `android`, or `web`.
+- `unregister_push_token(token)` deletes the current user's token.
+- `unread_notifications_count()` returns the current user's unread count.
+- `mark_notification_read(notification_id)` marks one notification as read.
+- `mark_all_notifications_read()` marks all current-user notifications as read.
+
+In-app notifications are already created by core event RPCs:
+
+- `join_event` creates `event_request` for the organizer when approval is required.
+- `approve_event_request` creates `event_approved` for the attendee.
+- `reject_event_request` creates `event_rejected` for the attendee.
+
+The UI exposes a realtime notification badge and a notifications screen. External APNs/FCM/Web Push delivery should be added as a later worker/edge-function layer that reads `notifications` and `push_tokens`; the product clients already have the token registration contract.
+
 ## Verification Checklist
 
 After applying migrations, verify:
@@ -205,12 +266,15 @@ The script loads `.env` and `.env.local`, then checks:
 
 - email/password organizer auth;
 - profile creation;
+- realtime publication coverage;
+- push token registration and notification read-state RPCs;
 - avatar Storage upload and public read;
 - profile/settings update;
 - event cover Storage upload and public read;
 - approval-required event creation;
 - event detail/location update;
 - nearby event discovery with distance calculation;
+- server-side discovery filters;
 - email/password attendee auth;
 - public profile privacy read;
 - direct conversation creation;

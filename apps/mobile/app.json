@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Join",
+    "slug": "join",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "join",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.join.mobile"
+    },
+    "android": {
+      "package": "app.join.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#111827"
+      }
+    },
+    "extra": {
+      "supabaseUrl": "$EXPO_PUBLIC_SUPABASE_URL",
+      "supabaseAnonKey": "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
+    }
+  }
+}

@@ -10,7 +10,8 @@ export default function Root() {
                      location.pathname.startsWith('/edit-event/') ||
                      location.pathname === '/settings' ||
                      location.pathname === '/edit-profile' ||
-                     location.pathname === '/create-event';
+                     location.pathname === '/create-event' ||
+                     location.pathname === '/notifications';
 
   return (
     <div className="min-h-screen bg-[#f2f2f7] flex flex-col max-w-[430px] mx-auto">

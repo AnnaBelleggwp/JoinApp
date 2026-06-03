@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Check, X, User } from "lucide-react";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
 import { requestApi, eventApi, EventRequest, User as UserType } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { subscribeToEventRequests } from "../../utils/realtime";
 
 export default function EventRequests() {
   const { id } = useParams();
@@ -13,16 +14,14 @@ export default function EventRequests() {
   const [processing, setProcessing] = useState<string | null>(null);
   const [eventTitle, setEventTitle] = useState("");
 
-  useEffect(() => {
-    loadRequests();
-  }, [id]);
+  const loadRequests = useCallback(async (showSpinner = true) => {
+    if (!id) return;
 
-  const loadRequests = async () => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
 
       // Проверяем что пользователь - организатор
-      const event = await eventApi.get(id!);
+      const event = await eventApi.get(id);
       const currentUserId = getCurrentUserId();
       setEventTitle(event.title);
 
@@ -32,16 +31,42 @@ export default function EventRequests() {
         return;
       }
 
-      const data = await requestApi.getForEvent(id!);
+      const data = await requestApi.getForEvent(id);
       // Показываем только pending заявки
       setRequests(data.filter(r => r.status === "pending"));
     } catch (error) {
       console.error("Error loading requests:", error);
       alert("Ошибка загрузки заявок");
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    void loadRequests();
+  }, [loadRequests]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    subscribeToEventRequests(id, () => {
+      if (active) void loadRequests(false);
+    }).then((cleanup) => {
+      if (active) {
+        unsubscribe = cleanup;
+      } else {
+        cleanup();
+      }
+    });
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [id, loadRequests]);
 
   const handleApprove = async (requestId: string) => {
     try {

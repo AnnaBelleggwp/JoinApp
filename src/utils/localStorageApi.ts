@@ -58,6 +58,19 @@ export interface ProfilePrivacy {
   hideEvents: boolean;
 }
 
+export type PushPlatform = "ios" | "android" | "web";
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: "event_request" | "event_approved" | "event_rejected" | "message" | "system";
+  title: string;
+  body?: string | null;
+  data: Record<string, unknown>;
+  readAt?: string | null;
+  createdAt: string;
+}
+
 export const userApi = {
   search: async (query: string): Promise<User[]> => {
     const users = getAllByPrefix<User>("user:");
@@ -133,6 +146,68 @@ export const settingsApi = {
   },
 };
 
+export const notificationApi = {
+  getAll: async (userId: string): Promise<Notification[]> => {
+    return getAllByPrefix<Notification>(`notification:${userId}:`).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  },
+
+  getUnreadCount: async (userId: string): Promise<number> => {
+    const notifications = await notificationApi.getAll(userId);
+    return notifications.filter((notification) => !notification.readAt).length;
+  },
+
+  markRead: async (notificationId: string): Promise<boolean> => {
+    const notifications = getAllByPrefix<Notification>("notification:");
+    const notification = notifications.find((item) => item.id === notificationId);
+    if (!notification) return false;
+
+    setToStorage(`notification:${notification.userId}:${notification.id}`, {
+      ...notification,
+      readAt: notification.readAt || new Date().toISOString(),
+    });
+    return true;
+  },
+
+  markAllRead: async (userId: string): Promise<number> => {
+    const notifications = await notificationApi.getAll(userId);
+    let updatedCount = 0;
+
+    for (const notification of notifications) {
+      if (!notification.readAt) {
+        updatedCount += 1;
+        setToStorage(`notification:${userId}:${notification.id}`, {
+          ...notification,
+          readAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    return updatedCount;
+  },
+};
+
+export const pushTokenApi = {
+  register: async (platform: PushPlatform, token: string): Promise<string> => {
+    const currentUserId = getCurrentUserId();
+    const id = `push_${platform}_${Date.now()}`;
+    setToStorage(`pushToken:${token}`, {
+      id,
+      userId: currentUserId,
+      platform,
+      token,
+      updatedAt: new Date().toISOString(),
+    });
+    return id;
+  },
+
+  unregister: async (token: string): Promise<boolean> => {
+    localStorage.removeItem(`pushToken:${token}`);
+    return true;
+  },
+};
+
 // ============ СОБЫТИЯ ============
 
 export type ParticipationStatus = "none" | "joined" | "pending" | "rejected";
@@ -186,7 +261,13 @@ export interface EventDiscoveryParams {
   longitude?: number;
   radiusMeters?: number;
   startsAfter?: string;
+  startsBefore?: string;
   categoryId?: string | null;
+  categoryName?: string | null;
+  query?: string;
+  minAttendees?: number;
+  maxAttendeesCount?: number;
+  hasAvailableSeats?: boolean;
   limit?: number;
 }
 
@@ -249,6 +330,18 @@ export const eventApi = {
       })
       .filter((event) => {
         if (startsAfter && event.startsAt && new Date(event.startsAt).getTime() < startsAfter) return false;
+        if (params.startsBefore && event.startsAt && new Date(event.startsAt).getTime() >= new Date(params.startsBefore).getTime()) {
+          return false;
+        }
+        if (params.categoryName && event.category !== params.categoryName) return false;
+        if (params.query) {
+          const query = params.query.toLowerCase();
+          const haystack = `${event.title} ${event.description} ${event.location}`.toLowerCase();
+          if (!haystack.includes(query)) return false;
+        }
+        if (params.minAttendees != null && event.attendees < params.minAttendees) return false;
+        if (params.maxAttendeesCount != null && event.attendees > params.maxAttendeesCount) return false;
+        if (params.hasAvailableSeats && event.maxAttendees && event.attendees >= event.maxAttendees) return false;
         if (hasOrigin && (event.distanceMeters == null || event.distanceMeters > radiusMeters)) return false;
         return true;
       })

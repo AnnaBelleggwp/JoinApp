@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { MapPin, Users, Calendar, Clock, User, Share2, Heart, Edit, ChevronRight, MessageCircle, ClipboardList } from "lucide-react";
 import { motion } from "motion/react";
@@ -7,6 +7,7 @@ import ShareModal from "./ShareModal";
 import ConfirmModal from "./ConfirmModal";
 import { chatApi, eventApi, type Event } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { subscribeToEventActivity } from "../../utils/realtime";
 
 export default function EventDetails() {
   const { id } = useParams();
@@ -20,16 +21,12 @@ export default function EventDetails() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"join" | "leave" | null>(null);
 
-  useEffect(() => {
-    if (id) {
-      loadEvent();
-    }
-  }, [id]);
+  const loadEvent = useCallback(async (showSpinner = true) => {
+    if (!id) return;
 
-  const loadEvent = async () => {
     try {
-      setLoading(true);
-      const data = await eventApi.get(id!);
+      if (showSpinner) setLoading(true);
+      const data = await eventApi.get(id);
       setEvent(data);
 
       if (data.participationStatus === "joined") {
@@ -41,9 +38,37 @@ export default function EventDetails() {
     } catch (error) {
       console.error("Error loading event:", error);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    if (id) {
+      void loadEvent();
+    }
+  }, [id, loadEvent]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    subscribeToEventActivity(id, () => {
+      if (active) void loadEvent(false);
+    }).then((cleanup) => {
+      if (active) {
+        unsubscribe = cleanup;
+      } else {
+        cleanup();
+      }
+    });
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [id, loadEvent]);
 
   const handleJoinClick = async () => {
     if (!event || mutating) return;

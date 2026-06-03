@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { Search } from "lucide-react";
 import { motion } from "motion/react";
@@ -6,6 +6,7 @@ import NavigationBar from "./NavigationBar";
 import SearchModal from "./SearchModal";
 import { chatApi, userApi, type Chat, type User } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { subscribeToChatList } from "../../utils/realtime";
 
 export default function ChatsList() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -14,13 +15,9 @@ export default function ChatsList() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadChats();
-  }, []);
-
-  const loadChats = async () => {
+  const loadChats = useCallback(async (showSpinner = true) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const currentUserId = getCurrentUserId();
       console.log(`Loading chats for user ${currentUserId}`);
       const [data, profile] = await Promise.all([
@@ -34,9 +31,34 @@ export default function ChatsList() {
       console.error("Error loading chats:", error);
       alert(`Ошибка загрузки чатов: ${error}`);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadChats();
+  }, [loadChats]);
+
+  useEffect(() => {
+    const currentUserId = getCurrentUserId();
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    subscribeToChatList(currentUserId, () => {
+      if (active) void loadChats(false);
+    }).then((cleanup) => {
+      if (active) {
+        unsubscribe = cleanup;
+      } else {
+        cleanup();
+      }
+    });
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [loadChats]);
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);

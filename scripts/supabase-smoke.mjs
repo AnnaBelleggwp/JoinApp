@@ -140,6 +140,24 @@ async function main() {
   logStep("creating email/password organizer profile");
   const organizer = await createEmailProfile("organizer");
 
+  logStep("checking realtime publication");
+  const realtimeTables = await rpc(organizer.client, "realtime_publication_tables", {});
+  const realtimeTableNames = new Set((realtimeTables || []).map((row) => row.table_name));
+  for (const tableName of [
+    "events",
+    "event_locations",
+    "messages",
+    "conversations",
+    "conversation_members",
+    "event_requests",
+    "event_attendees",
+    "notifications",
+  ]) {
+    if (!realtimeTableNames.has(tableName)) {
+      throw new Error(`${tableName} is not included in supabase_realtime publication`);
+    }
+  }
+
   logStep("uploading organizer avatar");
   const organizerAvatarUrl = await uploadSmokeImage(organizer.client, "avatars", organizer.userId, "avatar");
 
@@ -211,6 +229,34 @@ async function main() {
     throw new Error(`Expected nearby event distance close to 0, got ${nearbyEvent.distance_meters}`);
   }
 
+  logStep("reading filtered event discovery");
+  const filteredRows = await rpc(organizer.client, "nearby_events", {
+    p_query: "Updated Smoke",
+    p_starts_after: new Date(Date.now() - 60 * 1000).toISOString(),
+    p_starts_before: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+    p_min_attendees: 1,
+    p_max_attendees_count: 1,
+    p_has_available_seats: true,
+    p_limit: 10,
+  });
+
+  if (!filteredRows.some((row) => row.id === eventId)) {
+    throw new Error("Updated smoke event was not returned by filtered nearby_events");
+  }
+
+  logStep("registering and unregistering push token");
+  const smokePushToken = `web-smoke-token-${randomSuffix()}`;
+  const pushTokenId = await rpc(organizer.client, "register_push_token", {
+    p_platform: "web",
+    p_token: smokePushToken,
+  });
+  if (!pushTokenId) throw new Error("Push token registration returned no id");
+
+  const pushTokenDeleted = await rpc(organizer.client, "unregister_push_token", {
+    p_token: smokePushToken,
+  });
+  if (pushTokenDeleted !== true) throw new Error("Push token was not unregistered");
+
   logStep("creating email/password attendee profile");
   const attendee = await createEmailProfile("attendee");
 
@@ -265,10 +311,37 @@ async function main() {
     throw new Error(`Expected pending request, got ${JSON.stringify(joinResult)}`);
   }
 
+  const organizerUnreadBeforeApproval = await rpc(organizer.client, "unread_notifications_count", {});
+  if (organizerUnreadBeforeApproval < 1) {
+    throw new Error("Organizer did not receive an unread event request notification");
+  }
+
+  const { data: organizerNotifications, error: organizerNotificationsError } = await organizer.client
+    .from("notifications")
+    .select("id,type,read_at")
+    .eq("type", "event_request")
+    .limit(1);
+  if (organizerNotificationsError) throw organizerNotificationsError;
+  const organizerNotificationId = organizerNotifications?.[0]?.id;
+  if (!organizerNotificationId) throw new Error("Organizer event_request notification was not found");
+
+  const markedNotification = await rpc(organizer.client, "mark_notification_read", {
+    p_notification_id: organizerNotificationId,
+  });
+  if (markedNotification !== true) throw new Error("Organizer notification was not marked read");
+
   logStep("approving join request");
   await rpc(organizer.client, "approve_event_request", {
     p_request_id: joinResult.request_id,
   });
+
+  const attendeeUnreadAfterApproval = await rpc(attendee.client, "unread_notifications_count", {});
+  if (attendeeUnreadAfterApproval < 1) {
+    throw new Error("Attendee did not receive an unread approval notification");
+  }
+
+  const markedAll = await rpc(attendee.client, "mark_all_notifications_read", {});
+  if (markedAll < 1) throw new Error("Expected mark_all_notifications_read to update at least one row");
 
   const { data: attendeeRow, error: attendeeError } = await organizer.client
     .from("event_attendees")

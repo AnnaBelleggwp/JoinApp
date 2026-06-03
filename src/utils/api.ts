@@ -5,6 +5,8 @@ export type {
   User,
   UserSettings,
   ProfilePrivacy,
+  Notification,
+  PushPlatform,
   Event,
   EventDiscoveryParams,
   EventAttendee,
@@ -64,6 +66,40 @@ export const settingsApi = {
   getProfilePrivacy: async (userId: string) => {
     const api = await getSelectedApi();
     return api.settingsApi.getProfilePrivacy(userId);
+  },
+};
+
+export const notificationApi = {
+  getAll: async (userId: string) => {
+    const api = await getSelectedApi();
+    return api.notificationApi.getAll(userId);
+  },
+
+  getUnreadCount: async (userId: string) => {
+    const api = await getSelectedApi();
+    return api.notificationApi.getUnreadCount(userId);
+  },
+
+  markRead: async (notificationId: string) => {
+    const api = await getSelectedApi();
+    return api.notificationApi.markRead(notificationId);
+  },
+
+  markAllRead: async (userId: string) => {
+    const api = await getSelectedApi();
+    return api.notificationApi.markAllRead(userId);
+  },
+};
+
+export const pushTokenApi = {
+  register: async (platform: localApi.PushPlatform, token: string) => {
+    const api = await getSelectedApi();
+    return api.pushTokenApi.register(platform, token);
+  },
+
+  unregister: async (token: string) => {
+    const api = await getSelectedApi();
+    return api.pushTokenApi.unregister(token);
   },
 };
 

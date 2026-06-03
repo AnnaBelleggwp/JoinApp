@@ -13,6 +13,7 @@ import Settings from "./components/Settings";
 import EditProfile from "./components/EditProfile";
 import CreateEvent from "./components/CreateEvent";
 import EditEvent from "./components/EditEvent";
+import NotificationsScreen from "./components/NotificationsScreen";
 
 export const router = createBrowserRouter([
   {
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { path: "settings", Component: Settings },
       { path: "edit-profile", Component: EditProfile },
       { path: "create-event", Component: CreateEvent },
+      { path: "notifications", Component: NotificationsScreen },
     ],
   },
 ]);

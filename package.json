@@ -7,6 +7,10 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "mobile": "pnpm --filter @join/mobile start",
+    "mobile:ios": "pnpm --filter @join/mobile ios",
+    "mobile:android": "pnpm --filter @join/mobile android",
+    "mobile:typecheck": "pnpm --filter @join/mobile typecheck",
     "smoke:supabase": "node scripts/supabase-smoke.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit && pnpm --filter @join/core typecheck && pnpm --filter @join/db typecheck && pnpm --filter @join/api typecheck"
   },

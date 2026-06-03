@@ -1,30 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MapPin, Users, Calendar, Plus, Crown, Bell, Search } from "lucide-react";
 import { motion } from "motion/react";
 import NavigationBar from "./NavigationBar";
 import SearchModal from "./SearchModal";
-import { eventApi } from "../../utils/api";
+import { eventApi, type Event } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { subscribeToMyEvents } from "../../utils/realtime";
 
 type FilterType = "all" | "organizer" | "participant" | "pending" | "rejected";
 
 export default function MyEvents() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"upcoming" | "past">("upcoming");
-  const [myEvents, setMyEvents] = useState([]);
+  const [myEvents, setMyEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>("all");
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  useEffect(() => {
-    loadMyEvents();
-  }, []);
-
-  const loadMyEvents = async () => {
+  const loadMyEvents = useCallback(async (showSpinner = true) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const allEvents = await eventApi.getAll();
       const currentUserId = getCurrentUserId();
 
@@ -40,9 +37,34 @@ export default function MyEvents() {
     } catch (error) {
       console.error("Error loading my events:", error);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadMyEvents();
+  }, [loadMyEvents]);
+
+  useEffect(() => {
+    const currentUserId = getCurrentUserId();
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    subscribeToMyEvents(currentUserId, () => {
+      if (active) void loadMyEvents(false);
+    }).then((cleanup) => {
+      if (active) {
+        unsubscribe = cleanup;
+      } else {
+        cleanup();
+      }
+    });
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [loadMyEvents]);
 
   const currentUserId = getCurrentUserId();
 
@@ -78,7 +100,7 @@ export default function MyEvents() {
 
   const displayEvents = activeTab === "upcoming" ? upcomingEvents : pastEvents;
 
-  const getStatusBadge = (event: any) => {
+  const getStatusBadge = (event: Event) => {
     const isOrganizer = event.organizerId === currentUserId;
 
     if (isOrganizer) {

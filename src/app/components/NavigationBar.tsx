@@ -14,7 +14,7 @@ export default function NavigationBar({ title, showBack, rightButton }: Navigati
   return (
     <div className="bg-white/70 backdrop-blur-2xl border-b border-white/20 sticky top-0 z-50 shadow-[0_2px_20px_rgba(0,0,0,0.05)]">
       <div className="h-11 flex items-center justify-between px-4">
-        <div className="w-20">
+        <div className="w-28">
           {showBack && (
             <motion.button
               whileTap={{ scale: 0.95 }}
@@ -33,7 +33,7 @@ export default function NavigationBar({ title, showBack, rightButton }: Navigati
         >
           {title}
         </motion.h1>
-        <div className="w-20 flex justify-end">{rightButton}</div>
+        <div className="w-28 flex justify-end">{rightButton}</div>
       </div>
     </div>
   );

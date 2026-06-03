@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { SlidersHorizontal, MapPin, Users, Calendar, Map as MapIcon, List, Search } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -6,8 +6,32 @@ import NavigationBar from "./NavigationBar";
 import LazyMap from "./LazyMap";
 import FiltersModal from "./FiltersModal";
 import SearchModal from "./SearchModal";
+import NotificationBell from "./NotificationBell";
 import { eventApi, type Event } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import {
+  DISCOVERY_LOCATIONS,
+  DISCOVERY_RADIUS_OPTIONS,
+  getDiscoveryLocation,
+  readDiscoveryLocationState,
+  writeDiscoveryLocationState,
+} from "../../utils/discoveryLocation";
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function startOfDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function startOfNextMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 1);
+}
 
 export default function EventsList() {
   const [events, setEvents] = useState<Event[]>([]);
@@ -20,23 +44,72 @@ export default function EventsList() {
   const [dateFilter, setDateFilter] = useState("Все даты");
   const [attendeesFilter, setAttendeesFilter] = useState("Любое количество");
   const [searchQuery, setSearchQuery] = useState("");
+  const [discoveryLocation, setDiscoveryLocation] = useState(readDiscoveryLocationState);
 
-  // Загрузка событий при монтировании
+  const selectedDiscoveryLocation = getDiscoveryLocation(discoveryLocation.locationId);
+  const hasGeoFilter =
+    selectedDiscoveryLocation.latitude != null && selectedDiscoveryLocation.longitude != null;
+
+  const discoveryParams = useMemo(() => {
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const params: Parameters<typeof eventApi.discover>[0] = {
+      limit: 50,
+      query: searchQuery.trim() || undefined,
+      categoryName: selectedCategory === "Все" ? null : selectedCategory,
+      startsAfter: now.toISOString(),
+    };
+
+    if (selectedDiscoveryLocation.latitude != null && selectedDiscoveryLocation.longitude != null) {
+      params.latitude = selectedDiscoveryLocation.latitude;
+      params.longitude = selectedDiscoveryLocation.longitude;
+      params.radiusMeters = discoveryLocation.radiusMeters;
+    }
+
+    if (dateFilter === "Сегодня") {
+      params.startsAfter = todayStart.toISOString();
+      params.startsBefore = addDays(todayStart, 1).toISOString();
+    } else if (dateFilter === "На этой неделе") {
+      params.startsBefore = addDays(todayStart, 7).toISOString();
+    } else if (dateFilter === "В этом месяце") {
+      params.startsBefore = startOfNextMonth(now).toISOString();
+    }
+
+    if (attendeesFilter === "Менее 15") {
+      params.maxAttendeesCount = 14;
+    } else if (attendeesFilter === "15-25") {
+      params.minAttendees = 15;
+      params.maxAttendeesCount = 25;
+    } else if (attendeesFilter === "Более 25") {
+      params.minAttendees = 26;
+    }
+
+    return params;
+  }, [attendeesFilter, dateFilter, discoveryLocation.radiusMeters, searchQuery, selectedCategory, selectedDiscoveryLocation]);
+
   useEffect(() => {
-    loadEvents();
-  }, []);
+    writeDiscoveryLocationState(discoveryLocation);
+  }, [discoveryLocation]);
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await eventApi.discover({ limit: 50 });
+      const data = await eventApi.discover(discoveryParams);
       setEvents(data);
     } catch (error) {
       console.error("Error loading events:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [discoveryParams]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void loadEvents();
+    }, searchQuery ? 250 : 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [loadEvents, searchQuery]);
 
   const handleJoin = async (eventId: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -77,21 +150,6 @@ export default function EventsList() {
     return "bg-[#34C759]/90 text-white";
   };
 
-  const filteredEvents = events.filter(event => {
-    // Поиск по названию
-    if (searchQuery && !event.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
-    }
-
-    // Фильтры из модального окна
-    if (selectedCategory !== "Все" && event.category !== selectedCategory) return false;
-    if (dateFilter === "Сегодня") return event.date === "Сегодня";
-    if (dateFilter === "На этой неделе") return true; // Упрощенная логика
-    if (attendeesFilter === "Менее 15") return event.attendees < 15;
-    if (attendeesFilter === "15-25") return event.attendees >= 15 && event.attendees <= 25;
-    return true;
-  });
-
   const formatDistance = (distanceMeters?: number | null) => {
     if (distanceMeters == null) return null;
     if (distanceMeters < 1000) return `${Math.round(distanceMeters)} м`;
@@ -108,12 +166,20 @@ export default function EventsList() {
     setAttendeesFilter("Любое количество");
   };
 
+  const mapCenter =
+    selectedDiscoveryLocation.latitude != null && selectedDiscoveryLocation.longitude != null
+      ? ([selectedDiscoveryLocation.latitude, selectedDiscoveryLocation.longitude] as [number, number])
+      : undefined;
+
+  const mapZoom = discoveryLocation.radiusMeters <= 5000 ? 12 : discoveryLocation.radiusMeters <= 25000 ? 10 : 9;
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f2f2f7] to-white">
       <NavigationBar
         title="Главная"
         rightButton={
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <button
               onClick={() => setShowSearch(true)}
               className="text-[#34C759] p-1"
@@ -158,6 +224,51 @@ export default function EventsList() {
         </div>
       </div>
 
+      {/* Выбор области */}
+      <div className="px-4 pb-3">
+        <div className="bg-white/90 backdrop-blur-2xl rounded-2xl p-3 shadow-sm border border-white/20">
+          <div className="grid grid-cols-[1fr_auto] gap-3 items-center">
+            <label className="min-w-0">
+              <span className="text-[13px] text-[#3c3c43]/60 mb-1 block">Область поиска</span>
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-[#34C759] flex-shrink-0" />
+                <select
+                  value={discoveryLocation.locationId}
+                  onChange={(event) =>
+                    setDiscoveryLocation((current) => ({ ...current, locationId: event.target.value }))
+                  }
+                  className="w-full text-[16px] text-black bg-transparent border-none outline-none"
+                >
+                  {DISCOVERY_LOCATIONS.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </label>
+
+            <label className={`${hasGeoFilter ? "" : "opacity-40"}`}>
+              <span className="text-[13px] text-[#3c3c43]/60 mb-1 block">Радиус</span>
+              <select
+                value={discoveryLocation.radiusMeters}
+                onChange={(event) =>
+                  setDiscoveryLocation((current) => ({ ...current, radiusMeters: Number(event.target.value) }))
+                }
+                disabled={!hasGeoFilter}
+                className="text-[16px] text-black bg-transparent border-none outline-none"
+              >
+                {DISCOVERY_RADIUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
       {viewMode === "list" ? (
         <>
           {/* Список событий */}
@@ -166,12 +277,12 @@ export default function EventsList() {
               <div className="flex justify-center py-20">
                 <div className="w-12 h-12 border-4 border-[#34C759] border-t-transparent rounded-full animate-spin" />
               </div>
-            ) : filteredEvents.length === 0 ? (
+            ) : events.length === 0 ? (
               <div className="text-center py-20">
                 <p className="text-[17px] text-[#3c3c43]/60">Событий не найдено</p>
               </div>
             ) : (
-              filteredEvents.map((event, index) => (
+              events.map((event, index) => (
               <motion.div
                 key={event.id}
                 initial={{ opacity: 0, y: 20 }}
@@ -274,7 +385,7 @@ export default function EventsList() {
       ) : (
         /* Режим карты */
         <div className="h-[calc(100vh-180px)] px-4 pb-4">
-          <LazyMap events={filteredEvents} />
+          <LazyMap events={events} center={mapCenter} zoom={mapZoom} />
         </div>
       )}
 

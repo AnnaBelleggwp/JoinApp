@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Send, Smile, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import NavigationBar from "./NavigationBar";
 import { chatApi, userApi, type Chat, type Message, type User } from "../../utils/api";
 import { getCurrentUserId } from "../../utils/auth";
+import { getJoinDataSource } from "../../utils/dataSource";
+import { subscribeToChatMessages } from "../../utils/realtime";
 import { uploadChatImageAttachment } from "../../utils/storage";
 
 interface MessageWithUser extends Message {
@@ -25,17 +27,12 @@ export default function ChatScreen() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  useEffect(() => {
-    if (id) {
-      loadChat();
-      loadMessages();
-    }
-  }, [id]);
+  const loadChat = useCallback(async () => {
+    if (!id) return;
 
-  const loadChat = async () => {
     try {
       console.log("Loading chat with ID:", id);
-      const chatData = await chatApi.get(id!);
+      const chatData = await chatApi.get(id);
       console.log("Loaded chat data:", chatData);
       if (!chatData) {
         console.error("Chat not found in storage");
@@ -44,18 +41,20 @@ export default function ChatScreen() {
     } catch (error) {
       console.error("Error loading chat:", error);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  const loadMessages = async () => {
+  const loadMessages = useCallback(async (showSpinner = true) => {
+    if (!id) return;
+
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const currentUserId = getCurrentUserId();
       console.log(`Loading messages for chat ${id}, user ${currentUserId}`);
-      const data = await chatApi.getMessages(id!, currentUserId);
+      const data = await chatApi.getMessages(id, currentUserId);
       console.log(`Loaded ${data.length} messages:`, data);
 
       // Загружаем информацию о пользователях
@@ -79,9 +78,41 @@ export default function ChatScreen() {
       console.error("Error loading messages:", error);
       alert(`Ошибка загрузки сообщений: ${error}`);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    if (id) {
+      void loadChat();
+      void loadMessages();
+    }
+  }, [id, loadChat, loadMessages]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    subscribeToChatMessages(id, () => {
+      if (active) {
+        void loadChat();
+        void loadMessages(false);
+      }
+    }).then((cleanup) => {
+      if (active) {
+        unsubscribe = cleanup;
+      } else {
+        cleanup();
+      }
+    });
+
+    return () => {
+      active = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [id, loadChat, loadMessages]);
 
   const handleSend = async () => {
     if (!inputValue.trim() || !id) return;
@@ -96,7 +127,9 @@ export default function ChatScreen() {
       }, currentUserId);
 
       console.log("Message sent successfully:", newMessage);
-      setMessages(prevMessages => [...prevMessages, newMessage]);
+      if (getJoinDataSource() !== "supabase") {
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+      }
       setInputValue("");
     } catch (error) {
       console.error("Error sending message:", error);
@@ -122,7 +155,9 @@ export default function ChatScreen() {
         isMine: true,
       }, currentUserId);
 
-      setMessages((prevMessages) => [...prevMessages, newMessage]);
+      if (getJoinDataSource() !== "supabase") {
+        setMessages((prevMessages) => [...prevMessages, newMessage]);
+      }
     } catch (error) {
       console.error("Error sending image:", error);
       alert(error instanceof Error ? error.message : `Ошибка отправки изображения: ${error}`);

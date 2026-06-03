@@ -6,7 +6,9 @@ import type {
   EventDiscoveryParams,
   EventRequest,
   Message,
+  Notification,
   ProfilePrivacy,
+  PushPlatform,
   User,
   UserSettings,
 } from "./localStorageApi";
@@ -24,6 +26,7 @@ type MessageRow = Database["public"]["Tables"]["messages"]["Row"];
 type EventRequestRow = Database["public"]["Tables"]["event_requests"]["Row"];
 type UserSettingsRow = Database["public"]["Tables"]["user_settings"]["Row"];
 type EventAttendeeRow = Database["public"]["Tables"]["event_attendees"]["Row"];
+type NotificationRow = Database["public"]["Tables"]["notifications"]["Row"];
 
 const supabase = getSupabaseClient();
 const joinApi = getJoinApi();
@@ -71,6 +74,19 @@ function mapSettings(row: UserSettingsRow): UserSettings {
     hideEvents: row.hide_events,
     allowDirectMessages: row.allow_direct_messages,
     allowPushNotifications: row.allow_push_notifications,
+  };
+}
+
+function mapNotification(row: NotificationRow): Notification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    data: (row.data || {}) as Record<string, unknown>,
+    readAt: row.read_at,
+    createdAt: row.created_at,
   };
 }
 
@@ -298,6 +314,69 @@ export const settingsApi = {
   },
 };
 
+export const notificationApi = {
+  getAll: async (userId: string): Promise<Notification[]> => {
+    const authUserId = await getAuthenticatedUserId();
+    if (authUserId !== userId) throw new Error("Cannot read another user's notifications");
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id", authUserId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+    return (data || []).map(mapNotification);
+  },
+
+  getUnreadCount: async (userId: string): Promise<number> => {
+    const authUserId = await getAuthenticatedUserId();
+    if (authUserId !== userId) throw new Error("Cannot read another user's notification count");
+
+    const { data, error } = await supabase.rpc("unread_notifications_count");
+    if (error) throw error;
+    return data || 0;
+  },
+
+  markRead: async (notificationId: string): Promise<boolean> => {
+    const { data, error } = await supabase.rpc("mark_notification_read", {
+      p_notification_id: notificationId,
+    });
+
+    if (error) throw error;
+    return Boolean(data);
+  },
+
+  markAllRead: async (_userId: string): Promise<number> => {
+    const { data, error } = await supabase.rpc("mark_all_notifications_read");
+    if (error) throw error;
+    return data || 0;
+  },
+};
+
+export const pushTokenApi = {
+  register: async (platform: PushPlatform, token: string): Promise<string> => {
+    const { data, error } = await supabase.rpc("register_push_token", {
+      p_platform: platform,
+      p_token: token,
+    });
+
+    if (error) throw error;
+    if (!data) throw new Error("Push token was not registered");
+    return data;
+  },
+
+  unregister: async (token: string): Promise<boolean> => {
+    const { data, error } = await supabase.rpc("unregister_push_token", {
+      p_token: token,
+    });
+
+    if (error) throw error;
+    return Boolean(data);
+  },
+};
+
 export const eventApi = {
   getAll: async (): Promise<Event[]> => {
     return eventApi.discover();
@@ -310,7 +389,13 @@ export const eventApi = {
       p_longitude: params.longitude,
       p_radius_meters: params.radiusMeters,
       p_starts_after: params.startsAfter,
+      p_starts_before: params.startsBefore,
       p_category_id: params.categoryId || null,
+      p_category_name: params.categoryName || null,
+      p_query: params.query,
+      p_min_attendees: params.minAttendees,
+      p_max_attendees_count: params.maxAttendeesCount,
+      p_has_available_seats: params.hasAvailableSeats,
       p_limit: params.limit,
     });
 

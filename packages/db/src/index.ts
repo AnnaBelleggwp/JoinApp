@@ -1260,18 +1260,29 @@ export type Database = {
       }
       leave_event: { Args: { p_event_id: string }; Returns: boolean }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      mark_all_notifications_read: { Args: never; Returns: number }
       mark_conversation_read: {
         Args: { p_conversation_id: string }
+        Returns: boolean
+      }
+      mark_notification_read: {
+        Args: { p_notification_id: string }
         Returns: boolean
       }
       nearby_events: {
         Args: {
           p_category_id?: string
+          p_category_name?: string
+          p_has_available_seats?: boolean
           p_latitude?: number
           p_limit?: number
           p_longitude?: number
+          p_max_attendees_count?: number
+          p_min_attendees?: number
+          p_query?: string
           p_radius_meters?: number
           p_starts_after?: string
+          p_starts_before?: string
         }
         Returns: {
           address: string
@@ -1344,6 +1355,16 @@ export type Database = {
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
       profile_hide_events: { Args: { p_user_id: string }; Returns: boolean }
+      realtime_publication_tables: {
+        Args: never
+        Returns: {
+          table_name: string
+        }[]
+      }
+      register_push_token: {
+        Args: { p_platform: string; p_token: string }
+        Returns: string
+      }
       reject_event_request: { Args: { p_request_id: string }; Returns: boolean }
       require_current_profile: { Args: never; Returns: string }
       send_message: {
@@ -1937,6 +1958,8 @@ export type Database = {
         Returns: unknown
       }
       unlockrows: { Args: { "": string }; Returns: number }
+      unread_notifications_count: { Args: never; Returns: number }
+      unregister_push_token: { Args: { p_token: string }; Returns: boolean }
       update_event: {
         Args: {
           p_address?: string
